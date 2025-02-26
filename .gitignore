@@ -1,1 +1,4 @@
 venv/
+testSet/
+asl_model.pth
+__pycache__/
