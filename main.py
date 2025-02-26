@@ -5,7 +5,7 @@ import numpy as np
 def rgb_to_ycbcr(image_path):
     # Loading image
     img = cv2.imread(image_path)
-    img = cv2.resize(img, (128, 128))
+    img = cv2.resize(img, (512, 512))
 
     # Converting image to YCbCr
     img_ycbcr = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
@@ -21,10 +21,10 @@ def rgb_to_ycbcr(image_path):
     result = cv2.bitwise_and(img, img, mask = mask)
 
     # Display images
-    cv2.imshow("Original", img)
     cv2.imshow("YCbCr Skin Detection", result)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
     
     return result
 
+rgb_to_ycbcr("sample.jpg")
