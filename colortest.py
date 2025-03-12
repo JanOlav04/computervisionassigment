@@ -75,11 +75,16 @@ def apply_skin_segmentation_hsv(image):
 
     return skin_mask
 
+def apply_light_and_skin_detection(image):
+    corrected_image = lighting_compensation(image)
+    return apply_skin_segmentation_hsv(corrected_image)
 
-
+def apply_light_and_edge_detection(image):
+    corrected_image = lighting_compensation(image)
+    return apply_edge_detection(corrected_image)
 
 # Load the input image
-image = cv2.imread('nikohand.jpg')
+image = cv2.imread('asl_dataset\d\hand1_d_bot_seg_1_cropped.jpeg')
 
 # Step 1: Apply Lighting Compensation
 corrected_image = lighting_compensation(image)
@@ -94,3 +99,5 @@ skin_mask = apply_skin_segmentation_hsv(corrected_image)
 cv2.imwrite('corrected_image.jpg', corrected_image)  # (b)
 cv2.imwrite('edges.jpg', edges)  # (c)
 cv2.imwrite('skin_mask.jpg', skin_mask)  # (d)
+
+# TODO: Take skin detection, apply edges in black and only in the areas where skin is detected to remove background noise

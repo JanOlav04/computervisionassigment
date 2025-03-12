@@ -1,2 +1,4 @@
 timages/
 .vscode/
+asl_model.pth/
+__pycache__/
