@@ -1,6 +1,6 @@
 venv/
 testSet/
 asl_model.pth
-__pycache__/
+_*/
 .vscode/
 timages/
