@@ -5,12 +5,16 @@ import numpy as np
 from torchvision import transforms
 from main import ASLModel  # Import your trained model class
 
+# Check if GPU is available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 # Ensure correct number of classes
 num_classes = len(os.listdir("asl_dataset"))  # Use same class count as training
 
-# Load trained model
-model = ASLModel(num_classes)
-model.load_state_dict(torch.load("asl_model.pth"))
+# Load trained model and move to GPU
+model = ASLModel(num_classes).to(device)
+model.load_state_dict(torch.load("asl_model.pth", map_location=device))
 model.eval()  # Set to evaluation mode
 
 # Load class labels (sorted to match training order)
@@ -27,13 +31,17 @@ def predict_image(image_path):
         print(f"Error: Could not read image '{image_path}'.")
         return
 
-    img = cv2.resize(img, (64, 64))  # Resize to match training size
+    # Apply edge detection
+    img = cv2.Canny(img, 100, 200)
+
+    # Resize to match training size
+    img = cv2.resize(img, (224, 224))
 
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))  # Normalize as done during training
     ])
-    img_tensor = transform(img).unsqueeze(0)  # Add batch dimension
+    img_tensor = transform(img).unsqueeze(0).to(device)  # Move to GPU
 
     with torch.no_grad():
         output = model(img_tensor)
