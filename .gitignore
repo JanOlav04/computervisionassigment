@@ -2,3 +2,5 @@ venv/
 testSet/
 asl_model.pth
 __pycache__/
+.vscode/
+timages/
