@@ -18,7 +18,8 @@ def main_menu():
         
         elif choice == "2":
             # Add your code for testing the model on CPU if needed
-            break
+            runCPU = importlib.import_module("runCPU.testModel")
+            runCPU.predict_image("testSet/h1.jpg")
         
         elif choice == "3":
             # Dynamically import the train_model_gpu from the runGPU folder
