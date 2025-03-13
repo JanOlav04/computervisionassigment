@@ -9,6 +9,7 @@ import time
 import torch.nn.functional as F
 from torch.backends import cudnn
 import torchvision.models as models
+from colortest import process_image
 
 # Enable cuDNN benchmarking and deterministic algorithms for better performance
 cudnn.benchmark = True
@@ -89,6 +90,13 @@ class ASLDataset(Dataset):
     def _load_and_transform(self, img_path):
         """Load and transform a single image"""
         img = cv2.imread(img_path)
+        img = process_image(img)
+        
+        
+        # cv2.imshow("Image", img)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+
         if img is None:
             print(f"Warning: Could not read {img_path}")
             # Create empty tensor with correct shape
