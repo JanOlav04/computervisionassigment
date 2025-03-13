@@ -3,6 +3,8 @@ import cv2
 import os
 from torchvision import transforms
 from runGPU.trainModelGpu import ResNetASLModel,  ASLDataset  # Import trained model class
+from colortest import process_image
+import importlib
 
 device = torch.device("cuda")
 
@@ -34,8 +36,11 @@ def test_model(image_path, model_path="asl_model.pth", data_dir="asl_dataset"):
         transforms.Normalize((0.5,), (0.5,))
     ])
     
-    processImage = importlib.import_module("imageProcessing.removeImageNoise")
-    img = processImage.detect_hand_edges(image_path)
+    # processImage = importlib.import_module("imageProcessing.removeImageNoise")
+    # img = processImage.detect_hand_edges(image_path)
+    img = cv2.imread(image_path)
+    img = cv2.resize(img, (244, 244))
+    img = process_image(img)
 
     cv2.imshow("Image", img)
     cv2.waitKey(0)

@@ -30,7 +30,7 @@ def main_menu():
             # Dynamically import the test_model_gpu from the runGPU folder
             path = input("Enter the path of the image you want to test: ")
             runGPU = importlib.import_module("runGPU.testModelGpu")
-            runGPU.test_model_gpu(path)
+            runGPU.test_model(path)
         
         elif choice == "5":
             print("Exiting program...")
