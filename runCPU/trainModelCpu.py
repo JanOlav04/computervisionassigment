@@ -8,6 +8,7 @@ import os
 import numpy as np
 import time
 import torch.nn.functional as F
+import importlib
 
 # Use CPU device
 device = torch.device("cpu")
@@ -65,7 +66,8 @@ class ASLDataset(Dataset):
         print(f"Preloaded {len(self.image_paths)} images to RAM.\n")
     
     def _load_and_transform(self, img_path):
-        img = cv2.imread(img_path)
+        processImage = importlib.import_module("imageProcessing.removeImageNoise")
+        img = processImage.detect_hand_edges(img_path)
         if img is None:
             print(f"Warning: Could not read {img_path}")
             sample_shape = self.transform(np.zeros((100, 100, 3), dtype=np.uint8)).shape
@@ -201,10 +203,8 @@ def test_model(image_path, model_path="asl_model.pth", data_dir="./asl_dataset")
     ])
     
     start_time = time.time()
-    img = cv2.imread(image_path)
-    if img is None:
-        raise ValueError(f"Could not read image at {image_path}")
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    processImage = importlib.import_module("imageProcessing.removeImageNoise")
+    img = processImage.detect_skin(image_path)
     img_tensor = transform(img).unsqueeze(0).to(device)
     
     with torch.no_grad():

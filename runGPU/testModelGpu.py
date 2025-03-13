@@ -34,18 +34,17 @@ def test_model(image_path, model_path="asl_model.pth", data_dir="asl_dataset"):
         transforms.Normalize((0.5,), (0.5,))
     ])
     
-    # Process image
-    img = cv2.imread(image_path)
-    if img is None:
-        raise ValueError(f"Could not read image at {image_path}")
-    
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    processImage = importlib.import_module("imageProcessing.removeImageNoise")
+    img = processImage.detect_hand_edges(image_path)
+
+    cv2.imshow("Image", img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     img_tensor = transform(img).unsqueeze(0).to(device)
     
     # Perform inference
     with torch.no_grad(), torch.amp.autocast(device_type='cuda', dtype=torch.float16):
         output = model(img_tensor)
-        print(f"Raw output: {output}")
         probabilities = torch.softmax(output, dim=1)[0]
         
     # Get the top prediction
