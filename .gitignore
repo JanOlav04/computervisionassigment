@@ -1,6 +1,5 @@
 venv/
 testSet/
-asl_model.pth
 _*/
 .vscode/
 timages/
