@@ -4,3 +4,4 @@ _*/
 .vscode/
 timages/
 output_images
+*.pth
