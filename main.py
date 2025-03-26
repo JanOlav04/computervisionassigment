@@ -472,25 +472,23 @@ def enhance_hand_image(img_input, debug=False, output_folder="output_images"):
 
 def train_model_advanced(
     train_data_dir,
-    real_world_data_dir=None,
+    real_world_data_dir,  # No longer optional
     batch_size=32,
     num_epochs=50,
     learning_rate=0.001,
-    use_domain_adaptation=False,
     real_world_weight=0.3,
     apply_special_processing=True,
     output_model_path='asl_model_advanced_best.pth'
 ):
     """
-    Advanced training function that supports mixed datasets and domain adaptation
+    Advanced training function that always uses domain adaptation
     
     Args:
         train_data_dir: Directory with the main training dataset
-        real_world_data_dir: Directory with real-world images (optional)
+        real_world_data_dir: Directory with real-world images (required)
         batch_size: Batch size for training
         num_epochs: Maximum number of epochs to train
         learning_rate: Base learning rate
-        use_domain_adaptation: Whether to use domain-adaptive training
         real_world_weight: Weight of real-world examples in training (0-1)
         apply_special_processing: Whether to apply enhanced preprocessing to real-world images
         output_model_path: Path to save the best model
@@ -511,6 +509,7 @@ def train_model_advanced(
     print(f"Using device: {device}")
     
     print(f"Loading training dataset from {train_data_dir}")
+    print(f"Loading real-world dataset from {real_world_data_dir}")
     
     # Setup transforms
     # More aggressive augmentation for synthetic data
@@ -548,29 +547,19 @@ def train_model_advanced(
         is_real_world=False
     )
     
-    # If real-world data provided, create a mixed dataset
-    if real_world_data_dir and os.path.exists(real_world_data_dir):
-        real_world_dataset = SimpleASLDataset(
-            real_world_data_dir,
-            transform=real_world_transform,
-            is_real_world=True,
-            apply_special_processing=apply_special_processing
-        )
-        
-        # Create a combined dataset
-        if use_domain_adaptation:
-            # For domain adaptation, we need to keep track of domains
-            combined_dataset = train_dataset  # We'll handle real-world separately
-        else:
-            # For standard training, mix the datasets
-            combined_dataset = MixedASLDataset(
-                train_dataset,
-                real_world_dataset,
-                real_world_weight=real_world_weight
-            )
-    else:
-        combined_dataset = train_dataset
-        real_world_dataset = None
+    # Create real-world dataset
+    if not os.path.exists(real_world_data_dir):
+        raise ValueError(f"Real-world data directory {real_world_data_dir} does not exist")
+    
+    real_world_dataset = SimpleASLDataset(
+        real_world_data_dir,
+        transform=real_world_transform,
+        is_real_world=True,
+        apply_special_processing=apply_special_processing
+    )
+    
+    # For domain adaptation, we need to keep track of domains
+    combined_dataset = train_dataset  # We'll handle real-world separately
     
     # Split into train and validation
     dataset_size = len(combined_dataset)
@@ -601,38 +590,27 @@ def train_model_advanced(
         num_workers=0
     )
     
-    # Create domain-specific loader if using domain adaptation
-    if use_domain_adaptation and real_world_dataset:
-        real_world_loader = DataLoader(
-            real_world_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=0
-        )
-    else:
-        real_world_loader = None
+    # Create domain-specific loader for real-world data
+    real_world_loader = DataLoader(
+        real_world_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0
+    )
     
     # Create model
     num_classes = len(train_dataset.classes)
     print(f"Creating model with {num_classes} output classes")
     
-    if use_domain_adaptation:
-        model = DomainAdaptiveASLModel(num_classes).to(device)
-        print("Using domain-adaptive training model")
-    else:
-        model = ImprovedASLModel(num_classes).to(device)
-        print("Using standard model architecture")
+    model = DomainAdaptiveASLModel(num_classes).to(device)
+    print("Using domain-adaptive training model")
     
     # Criterion and optimizer
-    if use_domain_adaptation:
-        class_criterion = FocalLoss(gamma=2.0)
-        domain_criterion = nn.CrossEntropyLoss()
-        
-        # We need separate optimizers for the feature extractor and domain classifier
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    else:
-        criterion = FocalLoss(gamma=2.0)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    class_criterion = FocalLoss(gamma=2.0)
+    domain_criterion = nn.CrossEntropyLoss()
+    
+    # Optimizer for the entire model
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     
     # Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -653,96 +631,64 @@ def train_model_advanced(
         correct = 0
         total = 0
         
-        # Implement different training loops based on whether we're using domain adaptation
-        if use_domain_adaptation and real_world_loader:
-            # Domain adaptation training loop
-            # For each batch in the main dataset, also get a batch from the real-world dataset
-            for i, (syn_data, real_data) in enumerate(zip(train_loader, 
-                                                       # Cycle through real data if needed
-                                                       cycle_dataloader(real_world_loader, len(train_loader))
-                                                       )):
-                # Synthetic data
-                syn_images, syn_labels = syn_data
-                syn_images, syn_labels = syn_images.to(device), syn_labels.to(device)
-                
-                # Domain labels: 0 for synthetic
-                syn_domains = torch.zeros_like(syn_labels)
-                
-                # Real-world data
-                real_images, real_labels = real_data
-                real_images, real_labels = real_images.to(device), real_labels.to(device)
-                
-                # Domain labels: 1 for real-world
-                real_domains = torch.ones_like(real_labels)
-                
-                # Combine data
-                all_images = torch.cat([syn_images, real_images], dim=0)
-                all_labels = torch.cat([syn_labels, real_labels], dim=0)
-                all_domains = torch.cat([syn_domains, real_domains], dim=0)
-                
-                # Zero gradients
-                optimizer.zero_grad()
-                
-                # Forward pass
-                # For domain adaptation, we get both class and domain predictions
-                class_outputs, domain_outputs = model(all_images)
-                
-                # Class classification loss
-                class_loss = class_criterion(class_outputs, all_labels)
-                
-                # Domain classification loss
-                domain_loss = domain_criterion(domain_outputs, all_domains)
-                
-                # Total loss
-                # Gradually increase domain adaptation importance
-                alpha = min(1.0, (epoch + 1) / (num_epochs / 2))
-                loss = class_loss + alpha * domain_loss
-                
-                # Backward and optimize
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                
-                # Statistics
-                running_loss += loss.item()
-                _, predicted = class_outputs.max(1)
-                total += all_labels.size(0)
-                correct += predicted.eq(all_labels).sum().item()
-                
-                # Print batch progress
-                if (i+1) % 10 == 0:
-                    batch_acc = 100.0 * correct / total
-                    print(f"  Batch [{i+1}/{len(train_loader)}] Loss: {loss.item():.4f} Acc: {batch_acc:.2f}%")
-                    
-        else:
-            # Standard training loop
-            for i, (images, labels) in enumerate(train_loader):
-                images, labels = images.to(device), labels.to(device)
-                
-                # Zero gradients
-                optimizer.zero_grad()
-                
-                # Forward pass
-                outputs = model(images)
-                
-                # Loss calculation
-                loss = criterion(outputs, labels)
-                
-                # Backward and optimize
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                
-                # Statistics
-                running_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-                
-                # Print batch progress
-                if (i+1) % 10 == 0:
-                    batch_acc = 100.0 * correct / total
-                    print(f"  Batch [{i+1}/{len(train_loader)}] Loss: {loss.item():.4f} Acc: {batch_acc:.2f}%")
+        # Domain adaptation training loop
+        # For each batch in the main dataset, also get a batch from the real-world dataset
+        for i, (syn_data, real_data) in enumerate(zip(train_loader, 
+                                                   # Cycle through real data if needed
+                                                   cycle_dataloader(real_world_loader, len(train_loader))
+                                                   )):
+            # Synthetic data
+            syn_images, syn_labels = syn_data
+            syn_images, syn_labels = syn_images.to(device), syn_labels.to(device)
+            
+            # Domain labels: 0 for synthetic
+            syn_domains = torch.zeros_like(syn_labels)
+            
+            # Real-world data
+            real_images, real_labels = real_data
+            real_images, real_labels = real_images.to(device), real_labels.to(device)
+            
+            # Domain labels: 1 for real-world
+            real_domains = torch.ones_like(real_labels)
+            
+            # Combine data
+            all_images = torch.cat([syn_images, real_images], dim=0)
+            all_labels = torch.cat([syn_labels, real_labels], dim=0)
+            all_domains = torch.cat([syn_domains, real_domains], dim=0)
+            
+            # Zero gradients
+            optimizer.zero_grad()
+            
+            # Forward pass
+            # For domain adaptation, we get both class and domain predictions
+            class_outputs, domain_outputs = model(all_images)
+            
+            # Class classification loss
+            class_loss = class_criterion(class_outputs, all_labels)
+            
+            # Domain classification loss
+            domain_loss = domain_criterion(domain_outputs, all_domains)
+            
+            # Total loss
+            # Gradually increase domain adaptation importance
+            alpha = min(1.0, (epoch + 1) / (num_epochs / 2))
+            loss = class_loss + alpha * domain_loss
+            
+            # Backward and optimize
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            
+            # Statistics
+            running_loss += loss.item()
+            _, predicted = class_outputs.max(1)
+            total += all_labels.size(0)
+            correct += predicted.eq(all_labels).sum().item()
+            
+            # Print batch progress
+            if (i+1) % 10 == 0:
+                batch_acc = 100.0 * correct / total
+                print(f"  Batch [{i+1}/{len(train_loader)}] Loss: {loss.item():.4f} Acc: {batch_acc:.2f}%")
         
         # Calculate training metrics
         train_loss = running_loss / len(train_loader)
@@ -761,16 +707,10 @@ def train_model_advanced(
                 images, labels = images.to(device), labels.to(device)
                 
                 # Forward pass
-                if use_domain_adaptation:
-                    outputs, _ = model(images)
-                else:
-                    outputs = model(images)
+                outputs, _ = model(images)
                 
                 # Calculate loss
-                if use_domain_adaptation:
-                    loss = class_criterion(outputs, labels)
-                else:
-                    loss = criterion(outputs, labels)
+                loss = class_criterion(outputs, labels)
                 
                 val_loss += loss.item()
                 
@@ -813,26 +753,15 @@ def train_model_advanced(
             print(f'  Saving model with improved validation accuracy: {val_acc:.2f}%')
             
             # Save the model
-            if use_domain_adaptation:
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'val_loss': val_loss,
-                    'val_acc': val_acc,
-                    'classes': train_dataset.classes,
-                    'domain_adaptive': True
-                }, output_model_path)
-            else:
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'val_loss': val_loss,
-                    'val_acc': val_acc,
-                    'classes': train_dataset.classes,
-                    'domain_adaptive': False
-                }, output_model_path)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_loss': val_loss,
+                'val_acc': val_acc,
+                'classes': train_dataset.classes,
+                'domain_adaptive': True
+            }, output_model_path)
         else:
             patience_counter += 1
             print(f'  No improvement for {patience_counter} epochs')
@@ -843,7 +772,6 @@ def train_model_advanced(
     
     print(f'Training completed with best validation accuracy: {best_val_acc:.2f}%')
     return model
-
 
 def test_model_with_preprocessing(
     image_path, 
@@ -1246,32 +1174,17 @@ def main_menu():
     output_folder = "output_images"
     
     print("\n===== ASL Recognition System =====")
-    print("1. Train model (standard)")
-    print("2. Train model with domain adaptation")
-    print("3. Test model on image")
-    print("4. Compare preprocessing methods")
-    print("5. Debug validation performance")
-    print("6. Change output folder")
-    print("7. Exit")
+    print("1. Train model")
+    print("2. Test model on image")
+    print("3. Compare preprocessing methods")
+    print("4. Debug validation performance")
+    print("5. Change output folder")
+    print("6. Exit")
     
-    choice = input("Enter your choice (1-7): ")
+    choice = input("Enter your choice (1-6): ")
     
+        
     if choice == '1':
-        # Standard training
-        train_data_dir = input("Enter training data directory [./asl_dataset]: ") or "./asl_dataset"
-        real_world_data_dir = input("Enter real-world data directory (optional): ")
-        batch_size = int(input("Enter batch size [32]: ") or "32")
-        epochs = int(input("Enter number of epochs [50]: ") or "50")
-        
-        model = train_model_advanced(
-            train_data_dir=train_data_dir,
-            real_world_data_dir=real_world_data_dir if real_world_data_dir else None,
-            batch_size=batch_size,
-            num_epochs=epochs,
-            use_domain_adaptation=False
-        )
-        
-    elif choice == '2':
         # Domain adaptation training
         train_data_dir = input("Enter training data directory [./asl_dataset]: ") or "./asl_dataset"
         real_world_data_dir = input("Enter real-world data directory (required): ")
@@ -1287,10 +1200,9 @@ def main_menu():
             real_world_data_dir=real_world_data_dir,
             batch_size=batch_size,
             num_epochs=epochs,
-            use_domain_adaptation=True
         )
         
-    elif choice == '3':
+    elif choice == '2':
         # Test model
         image_path = input("Enter path to test image: ")
         if not os.path.exists(image_path):
@@ -1307,7 +1219,7 @@ def main_menu():
             output_folder=output_folder
         )
         
-    elif choice == '4':
+    elif choice == '3':
         # Compare preprocessing methods
         image_path = input("Enter path to test image: ")
         if not os.path.exists(image_path):
@@ -1322,7 +1234,7 @@ def main_menu():
             output_folder=output_folder
         )
         
-    elif choice == '5':
+    elif choice == '4':
         # Debug validation performance
         model_path = input("Enter model path [asl_model_advanced_best.pth]: ") or "asl_model_advanced_best.pth"
         data_dir = input("Enter data directory [./asl_dataset]: ") or "./asl_dataset"
@@ -1335,14 +1247,14 @@ def main_menu():
             output_folder=output_folder
         )
     
-    elif choice == '6':
+    elif choice == '5':
         # Change output folder
         new_folder = input(f"Enter new output folder path [{output_folder}]: ") or output_folder
         output_folder = new_folder
         ensure_output_folder(output_folder)
         print(f"Output folder changed to: {output_folder}")
         
-    elif choice == '7':
+    elif choice == '6':
         print("Exiting...")
         return
         
