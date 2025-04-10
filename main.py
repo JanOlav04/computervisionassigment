@@ -126,66 +126,6 @@ class MixedASLDataset(Dataset):
         real_idx = idx - len(self.synthetic_indices)
         return self.real_world_dataset[self.real_world_indices[real_idx]]
 
-
-# Improved CNN Model
-class ImprovedASLModel(nn.Module):
-    def __init__(self, num_classes, input_size=(224, 224)):
-        super(ImprovedASLModel, self).__init__()
-        
-        # Calculate feature map sizes
-        h, w = input_size
-        h_out = h // 2 // 2 // 2  # After 3 max pooling layers of stride 2
-        w_out = w // 2 // 2 // 2
-        
-        print(f"Feature map size after convolutions: {h_out}x{w_out}")
-        fc_input_size = 64 * h_out * w_out
-        print(f"Input features to fully connected layer: {fc_input_size}")
-        
-        # Improved CNN architecture
-        self.features = nn.Sequential(
-            # First convolutional block
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Second convolutional block
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Third convolutional block
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Dropout for regularization
-            nn.Dropout2d(0.2),
-        )
-        
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(fc_input_size, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
-    
-    def forward(self, x):
-        x = self.features(x)
-        x = self.classifier(x)
-        return x
-
-
 # Domain-Adaptive ASL Model (with domain classifier for adversarial training)
 class DomainAdaptiveASLModel(nn.Module):
     def __init__(self, num_classes, input_size=(224, 224), alpha=1.0):
@@ -824,9 +764,7 @@ def test_model_with_preprocessing(
         if is_domain_adaptive:
             model = DomainAdaptiveASLModel(num_classes).to(device)
             print("Using domain-adaptive model")
-        else:
-            model = ImprovedASLModel(num_classes).to(device)
-            print("Using standard model")
+        
             
         model.load_state_dict(checkpoint['model_state_dict'])
         print(f"Loaded model from {model_path} with validation accuracy: {checkpoint.get('val_acc', 'unknown')}%")
@@ -1061,8 +999,6 @@ def debug_validation_performance(model_path, data_dir, num_samples=3, output_fol
         is_domain_adaptive = checkpoint.get('domain_adaptive', False)
         if is_domain_adaptive:
             model = DomainAdaptiveASLModel(num_classes).to(device)
-        else:
-            model = ImprovedASLModel(num_classes).to(device)
             
         model.load_state_dict(checkpoint['model_state_dict'])
         print(f"Loaded model from {model_path} with validation accuracy: {checkpoint.get('val_acc', 'unknown')}%")
