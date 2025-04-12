@@ -12,7 +12,7 @@ import random
 from collections import defaultdict
 
 # Class to represent any dataset
-class SimpleASLDataset(Dataset):
+class ASLDataset(Dataset):
     def __init__(self, root_folder, transform=None, is_real_world=False, apply_special_processing=False):
         self.root_folder = root_folder
         self.transform = transform
@@ -75,9 +75,9 @@ class SimpleASLDataset(Dataset):
             return torch.zeros((1, 224, 224)), torch.tensor(self.labels[idx])
 
 # Domain-Adaptive ASL Model (with domain classifier for adversarial training)
-class DomainAdaptiveASLModel(nn.Module):
+class ASLModel(nn.Module):
     def __init__(self, num_classes, input_size=(224, 224), alpha=1.0):
-        super(DomainAdaptiveASLModel, self).__init__()
+        super(ASLModel, self).__init__()
         
         # Alpha controls the importance of domain adaptation (0 = no adaptation)
         self.alpha = alpha
@@ -422,13 +422,13 @@ def train_model(
     ])
     
     # Create datasets
-    train_dataset = SimpleASLDataset(
+    train_dataset = ASLDataset(
         train_data_dir, 
         transform=train_transform,
         is_real_world=False
     )
     
-    real_world_dataset = SimpleASLDataset(
+    real_world_dataset = ASLDataset(
         real_world_data_dir,
         transform=real_world_transform,
         is_real_world=True,
@@ -479,7 +479,7 @@ def train_model(
     num_classes = len(train_dataset.classes)
     print(f"Creating model with {num_classes} output classes")
     
-    model = DomainAdaptiveASLModel(num_classes).to(device)
+    model = ASLModel(num_classes).to(device)
     
     # Criterion and optimizer
     class_criterion = FocalLoss(gamma=2.0)
@@ -683,7 +683,7 @@ def test_model_with_preprocessing(
             num_classes = len(class_names)
             print(f"Loaded {num_classes} classes from checkpoint")
         elif data_dir:
-            dataset = SimpleASLDataset(data_dir, transform=None)
+            dataset = ASLDataset(data_dir, transform=None)
             class_names = dataset.classes
             num_classes = len(class_names)
             print(f"Loaded {num_classes} classes from dataset directory")
@@ -695,7 +695,7 @@ def test_model_with_preprocessing(
         
         # Create model
         if is_domain_adaptive:
-            model = DomainAdaptiveASLModel(num_classes).to(device)
+            model = ASLModel(num_classes).to(device)
             print("Using domain-adaptive model")
         
             
@@ -922,7 +922,7 @@ def debug_validation_performance(model_path, data_dir, num_samples=3, output_fol
             class_names = checkpoint['classes']
         else:
             # Try to get class names from dataset
-            dataset = SimpleASLDataset(data_dir, transform=None)
+            dataset = ASLDataset(data_dir, transform=None)
             class_names = dataset.classes
             
         num_classes = len(class_names)
@@ -931,7 +931,7 @@ def debug_validation_performance(model_path, data_dir, num_samples=3, output_fol
         # Create model
         is_domain_adaptive = checkpoint.get('domain_adaptive', False)
         if is_domain_adaptive:
-            model = DomainAdaptiveASLModel(num_classes).to(device)
+            model = ASLModel(num_classes).to(device)
             
         model.load_state_dict(checkpoint['model_state_dict'])
         print(f"Loaded model from {model_path} with validation accuracy: {checkpoint.get('val_acc', 'unknown')}%")
@@ -950,7 +950,7 @@ def debug_validation_performance(model_path, data_dir, num_samples=3, output_fol
     
     # Create dataset
     try:
-        dataset = SimpleASLDataset(data_dir, transform=None)
+        dataset = ASLDataset(data_dir, transform=None)
         
         # Get examples of each class
         class_indices = defaultdict(list)
