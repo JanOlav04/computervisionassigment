@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import random
 from collections import defaultdict
 
-# Move the dataset class definition outside any function
+# Class to represent any dataset
 class SimpleASLDataset(Dataset):
     def __init__(self, root_folder, transform=None, is_real_world=False, apply_special_processing=False):
         self.root_folder = root_folder
@@ -21,12 +21,13 @@ class SimpleASLDataset(Dataset):
         self.is_real_world = is_real_world
         self.apply_special_processing = apply_special_processing
         
-        # Identify classes
+        
         self.classes = sorted([d for d in os.listdir(root_folder) 
                               if os.path.isdir(os.path.join(root_folder, d)) and d != "_cache"])
         self.class_to_idx = {cls_name: i for i, cls_name in enumerate(self.classes)}
         
         # Store domain info for each image (0: synthetic, 1: real-world)
+        # Needed for domain adaptation
         self.domains = []
         
         for class_name in self.classes:
@@ -48,12 +49,11 @@ class SimpleASLDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.image_paths[idx]
         try:
-            # Load the image
             img = cv2.imread(img_path)
             if img is None:
                 raise ValueError(f"Could not read image {img_path}")
             
-            # Apply enhanced preprocessing for real-world images if requested
+            # Apply enhanced preprocessing for real-world images if requested by user
             if self.is_real_world and self.apply_special_processing:
                 img = enhance_hand_image(img)
             else:
@@ -61,7 +61,7 @@ class SimpleASLDataset(Dataset):
                 if len(img.shape) == 3:  # Color image
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 
-                # Normalize pixel values
+                
                 img = img.astype(np.float32) / 255.0
             
             # Apply transforms if provided
@@ -74,58 +74,6 @@ class SimpleASLDataset(Dataset):
             # Return a blank image and the label
             return torch.zeros((1, 224, 224)), torch.tensor(self.labels[idx])
 
-
-# Combined dataset for mixing real-world and synthetic data
-class MixedASLDataset(Dataset):
-    def __init__(self, synthetic_dataset, real_world_dataset=None, real_world_weight=0.3):
-        self.synthetic_dataset = synthetic_dataset
-        self.real_world_dataset = real_world_dataset
-        self.real_world_weight = real_world_weight  # Percentage of real-world samples to include
-        
-        # Combine datasets
-        if real_world_dataset is not None:
-            print(f"Creating mixed dataset with {len(synthetic_dataset)} synthetic and {len(real_world_dataset)} real-world images")
-            
-            # Use all synthetic images
-            self.synthetic_indices = list(range(len(synthetic_dataset)))
-            
-            # Select a subset of real-world images (balancing classes if possible)
-            real_world_class_indices = defaultdict(list)
-            for i in range(len(real_world_dataset)):
-                _, label = real_world_dataset[i]
-                real_world_class_indices[label.item()].append(i)
-            
-            # Calculate how many real-world images to include per class
-            num_classes = len(synthetic_dataset.classes)
-            total_real_world = int(len(synthetic_dataset) * real_world_weight)
-            per_class = max(1, total_real_world // num_classes)
-            
-            # Select balanced samples from each class
-            self.real_world_indices = []
-            for class_idx, indices in real_world_class_indices.items():
-                # Randomly select up to per_class indices for this class
-                if indices:
-                    selected = random.sample(indices, min(per_class, len(indices)))
-                    self.real_world_indices.extend(selected)
-            
-            print(f"Selected {len(self.real_world_indices)} real-world images for training")
-        else:
-            self.synthetic_indices = list(range(len(synthetic_dataset)))
-            self.real_world_indices = []
-            print("Using only synthetic dataset")
-        
-    def __len__(self):
-        return len(self.synthetic_indices) + len(self.real_world_indices)
-    
-    def __getitem__(self, idx):
-        # If idx is less than the number of synthetic samples, get from synthetic dataset
-        if idx < len(self.synthetic_indices):
-            return self.synthetic_dataset[self.synthetic_indices[idx]]
-        
-        # Otherwise, get from real-world dataset
-        real_idx = idx - len(self.synthetic_indices)
-        return self.real_world_dataset[self.real_world_indices[real_idx]]
-
 # Domain-Adaptive ASL Model (with domain classifier for adversarial training)
 class DomainAdaptiveASLModel(nn.Module):
     def __init__(self, num_classes, input_size=(224, 224), alpha=1.0):
@@ -136,14 +84,12 @@ class DomainAdaptiveASLModel(nn.Module):
         
         # Calculate feature map sizes
         h, w = input_size
-        h_out = h // 2 // 2 // 2  # After 3 max pooling layers of stride 2
+        h_out = h // 2 // 2 // 2 
         w_out = w // 2 // 2 // 2
         
-        print(f"Feature map size after convolutions: {h_out}x{w_out}")
         fc_input_size = 64 * h_out * w_out
-        print(f"Input features to fully connected layer: {fc_input_size}")
         
-        # Feature extractor - same as the main model
+        # Main Model (feature extractor)
         self.features = nn.Sequential(
             # First convolutional block
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
@@ -173,14 +119,14 @@ class DomainAdaptiveASLModel(nn.Module):
         # Class predictor (ASL letters)
         self.class_classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.2), # Dropout to prevent overfitting
             nn.Linear(fc_input_size, 256),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.3), 
             nn.Linear(256, num_classes)
         )
         
-        # Domain classifier (synthetic vs real)
+        # Domain classifier (for domain adaptation)
         self.domain_classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(fc_input_size, 128),
@@ -195,15 +141,13 @@ class DomainAdaptiveASLModel(nn.Module):
         if alpha is None:
             alpha = self.alpha
             
-        # Extract features
         features = self.features(x)
         
-        # Class prediction
         class_output = self.class_classifier(features)
         
         # For domain classification, we need to apply gradient reversal
         # Since PyTorch doesn't have a built-in GradientReversalLayer,
-        # we'll implement it using a custom gradient scaling approach
+        # we will implement it using a custom gradient scaling approach
         if self.training and alpha > 0:
             # Apply reverse gradient for domain adaptation during training
             reverse_features = GradientReversalFunction.apply(features, alpha)
@@ -248,7 +192,7 @@ class FocalLoss(nn.Module):
 
 def enhance_hand_image(img_input, debug=False, output_folder="output_images"):
     """
-    Enhance a hand image for better ASL recognition.
+    Enhance a hand image for better ASL recognition
     
     Args:
         img_input: Input image as numpy array or path to image
@@ -258,7 +202,6 @@ def enhance_hand_image(img_input, debug=False, output_folder="output_images"):
     Returns:
         Processed image as numpy array
     """
-    # Create output folder if it doesn't exist
     output_folder = ensure_output_folder(output_folder)
     
     # Load the image if a path is provided
@@ -269,10 +212,10 @@ def enhance_hand_image(img_input, debug=False, output_folder="output_images"):
     else:
         img = img_input.copy()
     
-    # Store original for comparison
+    # Store original for comparison step
     original = img.copy()
     
-    # Step 1: Resize if image is very large (keeping aspect ratio)
+    # Step 1: Resize if image is very large
     max_dim = 1024
     h, w = img.shape[:2]
     if max(h, w) > max_dim:
@@ -410,9 +353,9 @@ def enhance_hand_image(img_input, debug=False, output_folder="output_images"):
         return output_image / 255.0
 
 
-def train_model_advanced(
+def train_model(
     train_data_dir,
-    real_world_data_dir,  # No longer optional
+    real_world_data_dir, 
     batch_size=32,
     num_epochs=50,
     learning_rate=0.001,
@@ -421,7 +364,7 @@ def train_model_advanced(
     output_model_path='asl_model_advanced_best.pth'
 ):
     """
-    Advanced training function that always uses domain adaptation
+    Training function that always uses domain adaptation
     
     Args:
         train_data_dir: Directory with the main training dataset
@@ -436,12 +379,11 @@ def train_model_advanced(
     Returns:
         Trained model
     """
-    # Set multiprocessing start method to 'spawn' for Windows compatibility
+    # Set multiprocessing start method to 'spawn' for Windows compatibility (some of us work on linux)
     import multiprocessing
     try:
         multiprocessing.set_start_method('spawn')
     except RuntimeError:
-        # Method already set
         pass
         
     # Determine device
@@ -452,18 +394,17 @@ def train_model_advanced(
     print(f"Loading real-world dataset from {real_world_data_dir}")
     
     # Setup transforms
-    # More aggressive augmentation for synthetic data
     train_transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize((224, 224)),
-        transforms.RandomRotation(30),  # More rotation to match real-world variability
-        transforms.RandomAffine(0, scale=(0.8, 1.2), translate=(0.1, 0.1)),  # More translation/scaling
+        transforms.RandomRotation(30),  
+        transforms.RandomAffine(0, scale=(0.8, 1.2), translate=(0.1, 0.1)),  
         transforms.ColorJitter(brightness=0.2, contrast=0.2),  # Lighting variation
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
     
-    # Less augmentation for real-world data (which is already variable)
+    # Augmentation for real-world images (less aggressive)
     real_world_transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize((224, 224)),
@@ -487,10 +428,6 @@ def train_model_advanced(
         is_real_world=False
     )
     
-    # Create real-world dataset
-    if not os.path.exists(real_world_data_dir):
-        raise ValueError(f"Real-world data directory {real_world_data_dir} does not exist")
-    
     real_world_dataset = SimpleASLDataset(
         real_world_data_dir,
         transform=real_world_transform,
@@ -499,7 +436,7 @@ def train_model_advanced(
     )
     
     # For domain adaptation, we need to keep track of domains
-    combined_dataset = train_dataset  # We'll handle real-world separately
+    combined_dataset = train_dataset
     
     # Split into train and validation
     dataset_size = len(combined_dataset)
@@ -520,7 +457,7 @@ def train_model_advanced(
         combined_dataset, 
         batch_size=batch_size,
         sampler=train_sampler,
-        num_workers=0  # Use 0 to avoid multiprocessing issues
+        num_workers=0 
     )
     
     val_loader = DataLoader(
@@ -543,7 +480,6 @@ def train_model_advanced(
     print(f"Creating model with {num_classes} output classes")
     
     model = DomainAdaptiveASLModel(num_classes).to(device)
-    print("Using domain-adaptive training model")
     
     # Criterion and optimizer
     class_criterion = FocalLoss(gamma=2.0)
@@ -559,7 +495,7 @@ def train_model_advanced(
     
     # Training loop
     best_val_acc = 0.0
-    patience = 10  # Early stopping patience
+    patience = 7  # Early stopping patience
     patience_counter = 0
     
     for epoch in range(num_epochs):
@@ -573,10 +509,7 @@ def train_model_advanced(
         
         # Domain adaptation training loop
         # For each batch in the main dataset, also get a batch from the real-world dataset
-        for i, (syn_data, real_data) in enumerate(zip(train_loader, 
-                                                   # Cycle through real data if needed
-                                                   cycle_dataloader(real_world_loader, len(train_loader))
-                                                   )):
+        for i, (syn_data, real_data) in enumerate(zip(train_loader, cycle_dataloader(real_world_loader, len(train_loader)))):
             # Synthetic data
             syn_images, syn_labels = syn_data
             syn_images, syn_labels = syn_images.to(device), syn_labels.to(device)
@@ -634,7 +567,7 @@ def train_model_advanced(
         train_loss = running_loss / len(train_loader)
         train_acc = 100.0 * correct / total
         
-        # Validation phase
+        # Validation
         model.eval()
         val_loss = 0.0
         correct = 0
@@ -733,7 +666,7 @@ def test_model_with_preprocessing(
     Returns:
         Dictionary with predictions and confidence
     """
-    # Create output folder if it doesn't exist
+   
     output_folder = ensure_output_folder(output_folder)
     
     # Determine device
@@ -899,7 +832,7 @@ def evaluate_preprocessing_methods(image_path, model_path="asl_model_advanced_be
         data_dir: Path to dataset to get class names (if not in checkpoint)
         output_folder: Folder to save output images to
     """
-    # Create output folder if it doesn't exist
+    
     output_folder = ensure_output_folder(output_folder)
     
     # Try all preprocessing methods
@@ -1121,7 +1054,6 @@ def main_menu():
     
         
     if choice == '1':
-        # Domain adaptation training
         train_data_dir = input("Enter training data directory [./asl_dataset]: ") or "./asl_dataset"
         real_world_data_dir = input("Enter real-world data directory (required): ")
         if not real_world_data_dir:
@@ -1131,7 +1063,7 @@ def main_menu():
         batch_size = int(input("Enter batch size [32]: ") or "32")
         epochs = int(input("Enter number of epochs [50]: ") or "50")
         
-        model = train_model_advanced(
+        model = train_model(
             train_data_dir=train_data_dir,
             real_world_data_dir=real_world_data_dir,
             batch_size=batch_size,
@@ -1139,7 +1071,6 @@ def main_menu():
         )
         
     elif choice == '2':
-        # Test model
         image_path = input("Enter path to test image: ")
         if not os.path.exists(image_path):
             print(f"Error: Image '{image_path}' not found.")
